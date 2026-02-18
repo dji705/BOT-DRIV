@@ -1,0 +1,244 @@
+import React, { useState, useEffect, useCallback } from 'react';
+import { Download, Music, LogIn, LogOut, RefreshCw, Search, FileAudio } from 'lucide-react';
+
+/**
+ * מדריך להגדרת API:
+ * 1. היכנסו ל-Google Cloud Console.
+ * 2. צרו פרויקט חדש והפעילו את "Google Drive API".
+ * 3. בהגדרות OAuth, צרו Client ID (סוג: Web Application) והוסיפו את ה-URL שלכם ל-Authorized JavaScript Origins.
+ * 4. צרו API Key תחת Credentials.
+ */
+
+const CLIENT_ID = 'YOUR_CLIENT_ID_HERE'; // יש להזין כאן את ה-Client ID
+const API_KEY = ''; // המערכת תספק את המפתח בזמן ריצה
+const DISCOVERY_DOC = 'https://www.googleapis.com/discovery/v1/apis/drive/v3/rest';
+const SCOPES = 'https://www.googleapis.com/auth/drive.readonly';
+
+export default function App() {
+  const [tokenClient, setTokenClient] = useState(null);
+  const [user, setUser] = useState(null);
+  const [files, setFiles] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [error, setError] = useState(null);
+
+  // טעינת ספריות הגוגל
+  useEffect(() => {
+    const loadScripts = () => {
+      const gapiScript = document.createElement('script');
+      gapiScript.src = 'https://apis.google.com/js/api.js';
+      gapiScript.onload = () => {
+        window.gapi.load('client', async () => {
+          await window.gapi.client.init({
+            apiKey: API_KEY,
+            discoveryDocs: [DISCOVERY_DOC],
+          });
+        });
+      };
+      document.body.appendChild(gapiScript);
+
+      const gsiScript = document.createElement('script');
+      gsiScript.src = 'https://accounts.google.com/gsi/client';
+      gsiScript.onload = () => {
+        const client = window.google.accounts.oauth2.initTokenClient({
+          client_id: CLIENT_ID,
+          scope: SCOPES,
+          callback: (response) => {
+            if (response.error !== undefined) {
+              setError('התחברות נכשלה: ' + response.error);
+              return;
+            }
+            setUser(response);
+            fetchMusicFiles();
+          },
+        });
+        setTokenClient(client);
+      };
+      document.body.appendChild(gsiScript);
+    };
+
+    loadScripts();
+  }, []);
+
+  const handleAuth = () => {
+    if (tokenClient) {
+      tokenClient.requestAccessToken({ prompt: 'consent' });
+    }
+  };
+
+  const handleLogout = () => {
+    if (user) {
+      window.google.accounts.oauth2.revoke(user.access_token);
+      setUser(null);
+      setFiles([]);
+    }
+  };
+
+  const fetchMusicFiles = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const response = await window.gapi.client.drive.files.list({
+        pageSize: 100,
+        fields: 'nextPageToken, files(id, name, mimeType, size, webViewLink, webContentLink)',
+        q: "mimeType contains 'audio/'", // סינון לקבצי שמע בלבד
+      });
+
+      setFiles(response.result.files || []);
+    } catch (err) {
+      setError('שגיאה בשליפת הקבצים. וודאו שהגדרות ה-API נכונות.');
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const filteredFiles = files.filter(file => 
+    file.name.toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const formatSize = (bytes) => {
+    if (!bytes) return 'N/A';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+  };
+
+  return (
+    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans p-4 md:p-8 dir-rtl text-right">
+      <div className="max-w-5xl mx-auto">
+        {/* Header */}
+        <header className="flex flex-col md:flex-row justify-between items-center mb-8 gap-4 bg-white p-6 rounded-2xl shadow-sm border border-slate-100">
+          <div className="flex items-center gap-3">
+            <div className="bg-blue-600 p-2 rounded-lg text-white">
+              <Music size={28} />
+            </div>
+            <div>
+              <h1 className="text-2xl font-bold tracking-tight">מאגר השירים שלי</h1>
+              <p className="text-sm text-slate-500">ניהול והורדת קבצים מ-Google Drive</p>
+            </div>
+          </div>
+
+          <div className="flex gap-2">
+            {!user ? (
+              <button 
+                onClick={handleAuth}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-5 py-2.5 rounded-xl transition-all font-medium shadow-md shadow-blue-200"
+              >
+                <LogIn size={18} />
+                התחברות לגוגל דרייב
+              </button>
+            ) : (
+              <>
+                <button 
+                  onClick={fetchMusicFiles}
+                  className="flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2.5 rounded-xl transition-all font-medium"
+                >
+                  <RefreshCw size={18} className={loading ? 'animate-spin' : ''} />
+                  רענן
+                </button>
+                <button 
+                  onClick={handleLogout}
+                  className="flex items-center gap-2 border border-red-200 text-red-600 hover:bg-red-50 px-4 py-2.5 rounded-xl transition-all font-medium"
+                >
+                  <LogOut size={18} />
+                  התנתק
+                </button>
+              </>
+            )}
+          </div>
+        </header>
+
+        {error && (
+          <div className="bg-red-50 border border-red-100 text-red-700 p-4 rounded-xl mb-6 flex items-center gap-3">
+            <div className="bg-red-200 p-1 rounded-full">!</div>
+            {error}
+          </div>
+        )}
+
+        {/* Search & Stats */}
+        {user && (
+          <div className="mb-6 flex flex-col md:flex-row gap-4 items-center">
+            <div className="relative w-full">
+              <Search className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
+              <input 
+                type="text"
+                placeholder="חפש שיר במאגר..."
+                className="w-full pr-10 pl-4 py-3 rounded-xl border border-slate-200 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+              />
+            </div>
+            <div className="whitespace-nowrap bg-blue-50 text-blue-700 px-4 py-3 rounded-xl font-medium">
+              נמצאו {filteredFiles.length} קבצים
+            </div>
+          </div>
+        )}
+
+        {/* Files Grid */}
+        {!user ? (
+          <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-slate-200">
+            <div className="bg-slate-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+              <FileAudio size={40} className="text-slate-300" />
+            </div>
+            <h2 className="text-xl font-semibold mb-2">ברוכים הבאים למנהל השירים</h2>
+            <p className="text-slate-500 mb-6">אנא התחברו לחשבון הגוגל שלכם כדי לגשת לקבצים</p>
+            <button 
+              onClick={handleAuth}
+              className="bg-blue-600 text-white px-8 py-3 rounded-xl font-bold hover:bg-blue-700 transition-all shadow-lg shadow-blue-200"
+            >
+              התחל עכשיו
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            {loading ? (
+              Array(6).fill(0).map((_, i) => (
+                <div key={i} className="bg-white p-5 rounded-2xl animate-pulse h-32 flex flex-col justify-between">
+                  <div className="h-4 bg-slate-200 rounded w-3/4"></div>
+                  <div className="h-4 bg-slate-100 rounded w-1/4"></div>
+                </div>
+              ))
+            ) : filteredFiles.length > 0 ? (
+              filteredFiles.map((file) => (
+                <div key={file.id} className="bg-white p-5 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md hover:border-blue-100 transition-all group">
+                  <div className="flex items-start justify-between mb-3">
+                    <div className="bg-blue-50 p-2 rounded-lg text-blue-600 group-hover:bg-blue-600 group-hover:text-white transition-colors">
+                      <Music size={20} />
+                    </div>
+                    <span className="text-xs font-mono text-slate-400 bg-slate-50 px-2 py-1 rounded">
+                      {formatSize(file.size)}
+                    </span>
+                  </div>
+                  <h3 className="font-semibold text-slate-800 line-clamp-1 mb-4" title={file.name}>
+                    {file.name}
+                  </h3>
+                  <div className="flex gap-2">
+                    <a 
+                      href={file.webContentLink || file.webViewLink}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex-1 flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-700 text-white py-2 rounded-xl text-sm font-medium transition-all"
+                    >
+                      <Download size={16} />
+                      הורדה
+                    </a>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="col-span-full text-center py-12 text-slate-500">
+                לא נמצאו קבצי שמע בתיקייה זו.
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      <footer className="mt-12 text-center text-slate-400 text-sm">
+        <p>פותח לשימוש מקצועי ואיכותי • יש לכבד זכויות יוצרים</p>
+      </footer>
+    </div>
+  );
+}
